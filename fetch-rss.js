@@ -23,8 +23,36 @@ const SOURCES = [
     category: "Nepal",
     rssUrl: "https://www.ronbpost.com/feed/",
   },
-  // Add more sources below, e.g.:
-  // { id: "bbc-world", name: "BBC World", category: "World", rssUrl: "https://feeds.bbci.co.uk/news/world/rss.xml" },
+  {
+    id: "techpana",
+    name: "TechPana",
+    category: "Tech",
+    rssUrl: "https://techpana.com/feed/",
+  },
+  {
+    id: "ratopati",
+    name: "Ratopati",
+    category: "Nepal",
+    rssUrl: "https://www.ratopati.com/feed",
+  },
+  {
+    id: "setopati",
+    name: "Setopati",
+    category: "Nepal",
+    rssUrl: "https://www.setopati.com/feed",
+  },
+  {
+    id: "onlinekhabar",
+    name: "Online Khabar",
+    category: "Nepal",
+    rssUrl: "https://www.onlinekhabar.com/feed",
+  },
+  {
+    id: "nepalnews",
+    name: "Nepal News",
+    category: "Nepal",
+    rssUrl: "https://nepalnews.com/feed/",
+  },
 ];
 
 const SNIPPET_MAX_LENGTH = 250; // hard cap per your copyright/crediting rules
