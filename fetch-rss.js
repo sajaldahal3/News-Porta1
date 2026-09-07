@@ -53,6 +53,8 @@ const SOURCES = [
     category: "Nepal",
     rssUrl: "https://nepalnews.com/feed/",
   },
+  // Add more sources below the same way, each as its own { } object:
+  // { id: "bbc-world", name: "BBC World", category: "World", rssUrl: "https://feeds.bbci.co.uk/news/world/rss.xml" },
 ];
 
 const SNIPPET_MAX_LENGTH = 250; // hard cap per your copyright/crediting rules
