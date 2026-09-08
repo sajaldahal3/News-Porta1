@@ -10,6 +10,7 @@ const {
   extractImage,
   extractOgImageFromHtml,
   idFromUrl,
+  deriveLogoUrl,
   isTransientError,
 } = require("../fetch-rss.js");
 
@@ -189,4 +190,20 @@ test("extractOgImageFromHtml returns null when no meta image tags exist", () => 
 test("extractOgImageFromHtml handles empty input safely", () => {
   assert.equal(extractOgImageFromHtml("", "https://example.com"), null);
   assert.equal(extractOgImageFromHtml(null, "https://example.com"), null);
+});
+
+// --- deriveLogoUrl --------------------------------------------------------------
+test("deriveLogoUrl uses an explicit logoUrl when provided", () => {
+  const source = { rssUrl: "https://example.com/feed/", logoUrl: "https://cdn.example.com/logo.png" };
+  assert.equal(deriveLogoUrl(source), "https://cdn.example.com/logo.png");
+});
+
+test("deriveLogoUrl derives a favicon URL from the source's domain, stripping www.", () => {
+  const source = { rssUrl: "https://www.onlinekhabar.com/feed" };
+  assert.equal(deriveLogoUrl(source), "https://www.google.com/s2/favicons?domain=onlinekhabar.com&sz=128");
+});
+
+test("deriveLogoUrl returns null for an unparseable rssUrl with no explicit logoUrl", () => {
+  const source = { rssUrl: "not a valid url" };
+  assert.equal(deriveLogoUrl(source), null);
 });
