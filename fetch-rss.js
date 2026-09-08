@@ -26,6 +26,7 @@ const crypto = require("crypto");
 // flip "enabled" per source once sources move into Firestore itself.
 const SOURCES = [
   { id: "ronbpost", name: "RONB Post", category: "Nepal", rssUrl: "https://www.ronbpost.com/feed/", enabled: true },
+  { id: "techpana", name: "TechPana", category: "Tech", rssUrl: "https://techpana.com/feed/", enabled: true },
   { id: "ratopati", name: "Ratopati", category: "Nepal", rssUrl: "https://www.ratopati.com/feed", enabled: true },
   { id: "setopati", name: "Setopati", category: "Nepal", rssUrl: "https://www.setopati.com/feed", enabled: true },
   { id: "onlinekhabar", name: "Online Khabar", category: "Nepal", rssUrl: "https://www.onlinekhabar.com/feed", enabled: true },
@@ -34,13 +35,14 @@ const SOURCES = [
   // { id: "bbc-world", name: "BBC World", category: "World", rssUrl: "https://feeds.bbci.co.uk/news/world/rss.xml", enabled: true },
 ];
 
-const SNIPPET_MAX_LENGTH = 1000;      // hard cap per your copyright/crediting rules
+const SNIPPET_MAX_LENGTH = 250;      // hard cap per your copyright/crediting rules
 const TITLE_MAX_LENGTH = 300;
 const DEFAULT_MAX_ITEMS_PER_SOURCE = 50;   // cap per run, per source
 const DEFAULT_MAX_ARTICLE_AGE_HOURS = 48;  // don't import old backlog items
 const SOURCE_CONCURRENCY = 4;        // how many feeds to fetch at once
 const ARTICLE_CONCURRENCY = 5;       // how many articles to write at once, per source
 const FETCH_TIMEOUT_MS = 15000;
+const OG_IMAGE_TIMEOUT_MS = 8000;    // fallback page fetch is best-effort, keep it short
 
 const TRACKING_PARAMS = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "fbclid", "gclid"];
 
@@ -213,7 +215,59 @@ function extractImage(item) {
   return null;
 }
 
-/** Deterministic Firestore-safe document ID from a normalized URL. */
+/** Extracts an absolute image URL from a page's Open Graph / Twitter Card
+ *  meta tags. Used as a fallback when the RSS item itself has no image —
+ *  common for feeds that only publish title + excerpt with no media fields. */
+function extractOgImageFromHtml(html, pageUrl) {
+  if (!html) return null;
+  const patterns = [
+    /<meta[^>]+property=["']og:image(?::secure_url)?["'][^>]+content=["']([^"']+)["']/i,
+    /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image(?::secure_url)?["']/i,
+    /<meta[^>]+name=["']twitter:image(?::src)?["'][^>]+content=["']([^"']+)["']/i,
+    /<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:image(?::src)?["']/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (!match) continue;
+    try {
+      // Resolves protocol-relative (//host/img.jpg) and relative (/img.jpg) URLs
+      // against the page's own URL, then runs the normal URL normalization.
+      const absolute = new URL(match[1], pageUrl).toString();
+      const normalized = normalizeUrl(absolute);
+      if (normalized) return normalized;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+/** Fetches a page and tries to pull its og:image / twitter:image.
+ *  Fails safe: any network/parse error just returns null rather than
+ *  throwing, since this is a best-effort fallback, not critical path. */
+async function fetchOgImage(pageUrl, timeoutMs = OG_IMAGE_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(pageUrl, {
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; NewsPortalBot/1.0)",
+        Accept: "text/html",
+      },
+    });
+    if (!response.ok) return null;
+    // Only the <head> is needed for meta tags — cap how much we process
+    // to avoid doing extra work on very large pages.
+    const html = (await response.text()).slice(0, 200_000);
+    return extractOgImageFromHtml(html, pageUrl);
+  } catch {
+    return null; // timeout, network error, blocked, etc. — safe to skip
+  } finally {
+    clearTimeout(timer);
+  }
+}
 function idFromUrl(normalizedUrl) {
   return crypto.createHash("sha256").update(normalizedUrl).digest("hex");
 }
@@ -290,6 +344,7 @@ async function writeSourceHealth(db, source, health) {
           invalidAge: health.invalidAge,
           invalidData: health.invalidData,
           failed: health.failed,
+          imageFromFallback: health.imageFromFallback,
         },
       },
       { merge: true }
@@ -324,7 +379,16 @@ async function processArticle(db, source, item, health, maxAgeHours) {
 
     const rawSnippetSource = item.contentSnippet || item.summary || item.content || item["content:encoded"] || "";
     const snippet = truncate(cleanHtml(rawSnippetSource), SNIPPET_MAX_LENGTH);
-    const imageUrl = extractImage(item);
+
+    let imageUrl = extractImage(item);
+    if (!imageUrl) {
+      // The RSS item itself had no usable image field — fall back to
+      // fetching the article page's og:image (the thumbnail publishers
+      // already generate for link previews). Best-effort: never throws.
+      imageUrl = await fetchOgImage(originalUrl);
+      if (imageUrl) health.imageFromFallback++;
+    }
+
     const docId = idFromUrl(originalUrl);
 
     const publishedAt = publishedDate
@@ -367,6 +431,7 @@ async function ingestSource(db, parser, source) {
     invalidAge: 0,
     invalidData: 0,
     failed: 0,
+    imageFromFallback: 0,
   };
 
   console.log(`Fetching: ${source.name} (${source.rssUrl})`);
@@ -397,7 +462,8 @@ async function ingestSource(db, parser, source) {
 
     console.log(
       `  ✓ ${source.name}: ${health.added} new, ${health.skipped} already existed, ` +
-        `${health.invalidAge} too old, ${health.invalidData} invalid, ${health.failed} failed`
+        `${health.invalidAge} too old, ${health.invalidData} invalid, ${health.failed} failed, ` +
+        `${health.imageFromFallback} images filled via page fallback`
     );
   } catch (err) {
     health.status = "error";
@@ -474,6 +540,7 @@ module.exports = {
   parseArticleDate,
   isWithinAgeLimit,
   extractImage,
+  extractOgImageFromHtml,
   idFromUrl,
   isTransientError,
   mapWithConcurrency,
