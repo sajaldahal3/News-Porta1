@@ -271,6 +271,22 @@ function idFromUrl(normalizedUrl) {
   return crypto.createHash("sha256").update(normalizedUrl).digest("hex");
 }
 
+/** Returns a logo URL for a source: uses an explicit `logoUrl` if one was
+ *  set on the source config, otherwise derives one automatically from the
+ *  source's own domain via a favicon service — so every source gets a
+ *  reasonable icon without you having to manually find/host a logo file
+ *  for each outlet. Swap in a better hand-picked logoUrl per source later
+ *  if a favicon looks too low-res for your UI. */
+function deriveLogoUrl(source) {
+  if (source.logoUrl) return source.logoUrl;
+  try {
+    const domain = new URL(source.rssUrl).hostname.replace(/^www\./, "");
+    return `https://www.google.com/s2/favicons?domain=${domain}&sz=128`;
+  } catch {
+    return null;
+  }
+}
+
 // =======================================================================
 // 3. FIREBASE INIT
 // =======================================================================
@@ -332,6 +348,7 @@ async function writeSourceHealth(db, source, health) {
         name: source.name,
         category: source.category,
         rssUrl: source.rssUrl,
+        logoUrl: deriveLogoUrl(source),
         enabled: source.enabled !== false,
         lastFetchedAt: admin.firestore.FieldValue.serverTimestamp(),
         lastFetchStatus: health.status,
@@ -397,6 +414,7 @@ async function processArticle(db, source, item, health, maxAgeHours) {
     const result = await createArticleIfNew(db, docId, {
       sourceId: source.id,
       sourceName: source.name,
+      sourceLogoUrl: deriveLogoUrl(source),
       category: source.category,
       title,
       snippet,
@@ -541,6 +559,7 @@ module.exports = {
   extractImage,
   extractOgImageFromHtml,
   idFromUrl,
+  deriveLogoUrl,
   isTransientError,
   mapWithConcurrency,
 };
