@@ -8,6 +8,7 @@ const {
   parseArticleDate,
   isWithinAgeLimit,
   extractImage,
+  extractOgImageFromHtml,
   idFromUrl,
   isTransientError,
 } = require("../fetch-rss.js");
@@ -149,4 +150,43 @@ test("isTransientError recognizes common transient network errors", () => {
 
 test("isTransientError returns false for permanent errors", () => {
   assert.equal(isTransientError(new Error("Invalid XML syntax")), false);
+});
+
+// --- extractOgImageFromHtml --------------------------------------------------------------
+test("extractOgImageFromHtml finds a standard og:image tag", () => {
+  const html = '<html><head><meta property="og:image" content="https://example.com/thumb.jpg"></head></html>';
+  assert.equal(extractOgImageFromHtml(html, "https://example.com/article"), "https://example.com/thumb.jpg");
+});
+
+test("extractOgImageFromHtml finds og:image with attributes in reversed order", () => {
+  const html = '<meta content="https://example.com/thumb2.jpg" property="og:image">';
+  assert.equal(extractOgImageFromHtml(html, "https://example.com/article"), "https://example.com/thumb2.jpg");
+});
+
+test("extractOgImageFromHtml falls back to twitter:image when og:image is absent", () => {
+  const html = '<meta name="twitter:image" content="https://example.com/tw.jpg">';
+  assert.equal(extractOgImageFromHtml(html, "https://example.com/article"), "https://example.com/tw.jpg");
+});
+
+test("extractOgImageFromHtml resolves a protocol-relative image URL", () => {
+  const html = '<meta property="og:image" content="//example.com/relative.jpg">';
+  assert.equal(extractOgImageFromHtml(html, "https://example.com/article"), "https://example.com/relative.jpg");
+});
+
+test("extractOgImageFromHtml resolves a path-relative image URL against the page URL", () => {
+  const html = '<meta property="og:image" content="/images/pic.jpg">';
+  assert.equal(
+    extractOgImageFromHtml(html, "https://example.com/news/article-1"),
+    "https://example.com/images/pic.jpg"
+  );
+});
+
+test("extractOgImageFromHtml returns null when no meta image tags exist", () => {
+  const html = "<html><head><title>No image here</title></head></html>";
+  assert.equal(extractOgImageFromHtml(html, "https://example.com/article"), null);
+});
+
+test("extractOgImageFromHtml handles empty input safely", () => {
+  assert.equal(extractOgImageFromHtml("", "https://example.com"), null);
+  assert.equal(extractOgImageFromHtml(null, "https://example.com"), null);
 });
