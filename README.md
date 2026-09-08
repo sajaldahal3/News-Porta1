@@ -1,79 +1,119 @@
-# RSS Ingest (free, automatic, self-updating)
+# RSS Ingest v2 (hardened)
 
-This little project fetches RSS feeds on a schedule and writes new articles
-into Firestore. Once set up, it runs forever for free via GitHub Actions —
-no server, no AI model, no manual re-pasting of feed content ever needed
-again.
+This is an upgraded version of the ingestion script with the reliability,
+data-quality, and performance issues fixed. If you're setting this up for
+the first time, follow the numbered setup steps below. If you're
+**upgrading an existing repo**, read the "Upgrading from v1" section first
+— there's one important thing to know about duplicate articles.
 
-## Setup (one time)
+## What changed from v1
 
-1. **Create a Firebase project** at https://console.firebase.google.com
-   and enable Firestore (production mode).
+| Area | v1 | v2 |
+|---|---|---|
+| Article failures | One bad item could stop the whole feed | Each article is isolated in its own try/catch — one failure never affects the rest |
+| Duplicate detection | Firestore read, then write (race condition if two runs overlap) | Atomic `create()` — Firestore itself rejects the second write, no read needed |
+| Dates | Passed straight into `new Date()`, could crash on bad data | Validated with safe fallback; unparseable dates don't block ingestion |
+| Images | Checked a couple of RSS fields, one HTML pattern | Checks `enclosure`, `media:content`, `media:thumbnail`, `item.image`, lazy-loaded (`data-src`), and more |
+| URLs | Stored as-is | Normalized: tracking params (`utm_*`, `fbclid`, `gclid`) and fragments stripped, so the same article isn't duplicated by URL variants |
+| Titles | `item.title \|\| "(untitled)"` | HTML-stripped, whitespace-validated, length-capped |
+| Snippets | Whitespace-normalized only | HTML tags actually stripped before truncation |
+| Feed fetching | Sequential, one at a time | Parallel (configurable concurrency), so one slow feed doesn't delay the others |
+| Network errors | Immediate failure | Retried 2–3x with exponential backoff for timeouts, 502/503, DNS blips |
+| Firestore errors | Immediate failure | Transient errors (`UNAVAILABLE`, `DEADLINE_EXCEEDED`, etc.) retried |
+| Item volume | No cap | Max 50 items per source per run (configurable per-source) |
+| Backlog | A new/changed feed could import years of old articles | Articles older than 48h (configurable) are skipped |
+| Source health | `active: true` regardless of actual health | `enabled` (config) and `lastFetchStatus`/`lastRunCounts` (live health) are now separate fields |
+| Workflow overlap | None — a slow run could overlap the next | `concurrency` group added to the GitHub Actions workflow |
+| Dependency installs | `npm install` (non-reproducible) | `npm ci` from a committed `package-lock.json` |
+| ID hashing | SHA-1 | SHA-256 (see migration note below) |
+| Tests | None | 26 unit tests covering URL/date/title/image handling and edge cases |
+| Schedule | Every 20 minutes | Every 5 minutes, with overlap protection so this is safe |
 
-2. **Generate a service account key**
-   Firebase Console → Project Settings → Service Accounts → *Generate new
-   private key*. This downloads a JSON file. **Do not commit this file.**
+## ⚠️ Upgrading from v1 — read this first
 
-3. **Create a new GitHub repo** and push these files into it:
+This version hashes article IDs with **SHA-256** instead of SHA-1. That
+means every article already sitting in your `articles` collection will get
+a **different** document ID under the new code, so on your first run after
+upgrading, all previously-ingested articles will be re-added as if they
+were new (a one-time batch of "duplicates" showing the same headlines
+twice in your Firestore data, though your app can dedupe display by
+`originalUrl` if that's a concern).
+
+If you'd rather avoid this entirely, you have two options:
+1. **Do nothing** — accept the one-time duplication. It's harmless data
+   bloat, well within free-tier limits, and never happens again after the
+   first run.
+2. **Wipe the `articles` collection** in the Firebase Console before your
+   first v2 run, so everything re-ingests cleanly under the new IDs with
+   no duplicates at all.
+
+## Setup (same as before)
+
+1. Create a Firebase project + enable Firestore.
+2. Generate a service account key (Project Settings → Service Accounts).
+3. Push all files in this folder — including `package-lock.json` — to your
+   GitHub repo, preserving the folder structure exactly:
    - `package.json`
+   - `package-lock.json`
    - `fetch-rss.js`
    - `.github/workflows/fetch-rss.yml`
+   - `tests/util.test.js`
    - this `README.md`
+4. Add your key as a GitHub secret named `FIREBASE_SERVICE_ACCOUNT`.
+5. Edit the `SOURCES` array in `fetch-rss.js` to add/remove feeds.
+6. Trigger the workflow manually once from the Actions tab to confirm it
+   works, then let the 5-minute schedule take over automatically.
 
-4. **Add your Firebase key as a GitHub Secret**
-   In your repo: Settings → Secrets and variables → Actions →
-   *New repository secret*.
-   - Name: `FIREBASE_SERVICE_ACCOUNT`
-   - Value: paste the **entire contents** of the service account JSON file.
-
-5. **Edit the source list**
-   Open `fetch-rss.js` and edit the `SOURCES` array near the top — add every
-   RSS feed URL you want to pull from, each with a short `id`, a display
-   `name`, and a `category`.
-
-6. **Test it manually**
-   Push your code, go to the **Actions** tab in GitHub, select
-   "Fetch RSS Feeds," and click **Run workflow**. Check the logs — you
-   should see something like:
-   ```
-   Fetching: RONB Post (https://www.ronbpost.com/feed/)
-     ✓ RONB Post: 8 new, 0 already existed
-   Done. 8 new article(s) added across 1 source(s).
-   ```
-   Then check your Firestore console — an `articles` collection should now
-   have documents in it.
-
-7. **That's it.** From now on, GitHub runs this automatically every 20
-   minutes, forever, for free — no further action needed. Your app's
-   Home feed just reads from the `articles` collection in Firestore as
-   already planned in the PRD.
-
-## Why this works and copy-pasting didn't
-
-RSS is a **live endpoint** — every time this script requests the feed URL,
-the publisher's server returns whatever is current *at that moment*.
-Copy-pasting feed content into a chat only captures a single snapshot in
-time; nothing built from that snapshot can ever see new articles, because
-there's no ongoing connection back to the source. This script *is* that
-ongoing connection.
-
-## Local testing (optional)
-
-If you want to test on your own machine before relying on GitHub Actions:
+## Running tests
 
 ```bash
-npm install
-export FIREBASE_SERVICE_ACCOUNT="$(cat path/to/serviceAccountKey.json)"
-node fetch-rss.js
+npm ci
+npm test
 ```
 
-## Free-tier limits to be aware of
+This runs 26 tests against the pure logic functions (URL normalization,
+date parsing, title/HTML cleaning, image extraction, transient-error
+detection) — no live network or Firebase credentials needed.
 
-- **GitHub Actions:** 2,000 free minutes/month on private repos, unlimited
-  on public repos. A 20-minute-interval job that finishes in a few seconds
-  uses a tiny fraction of this.
-- **Firestore (Spark plan):** 50,000 reads / 20,000 writes / 20,000 deletes
-  per day, 1GB storage — comfortably enough for a personal-scale news app.
-  Note this script does one Firestore *read* per feed item (to check for
-  duplicates) plus one *write* per new item, so keep an eye on total item
-  count across all your sources if you add many feeds.
+## About the image problem specifically
+
+If images weren't showing up in your app before, it was very likely the
+old `extractImage()` only checking a couple of RSS field shapes — many
+Nepali news sites (and WordPress sites generally) put images in
+`media:content`, lazy-loaded `data-src` attributes, or an `item.image`
+field that the old code never looked at. The new version checks all of
+these, in priority order, and normalizes whatever URL it finds.
+
+If an image still doesn't render in your **frontend app** after this
+fix, that's a separate, second issue: some publishers block "hotlinked"
+images (i.e. loading their image directly from another website) unless a
+proper referrer header is sent. In your frontend `<img>` tags, add:
+
+```html
+<img src="{imageUrl}" referrerPolicy="no-referrer" />
+```
+
+This fixes the majority of hotlink-blocking cases. For any source that
+still blocks it even with that, the only real fix is proxying/caching
+that source's images through your own backend — worth doing only if you
+hit it in practice, not preemptively.
+
+## Free-tier impact of the faster schedule
+
+Firestore reads dropped essentially to zero for duplicate checks (the old
+one-read-per-item pattern is gone — `create()` needs no preceding read),
+so switching from 20-minute to 5-minute runs is **not** a meaningful
+Firestore cost increase. GitHub Actions minutes usage is still trivial:
+even at ~288 runs/day, each finishing in well under a minute, you're
+nowhere near the 2,000 free minutes/month limit (unlimited on public
+repos anyway).
+
+## Next architectural step (not done yet, flagged for later)
+
+Sources currently still live as a hardcoded array in `fetch-rss.js`. The
+natural next step — once you're building the admin panel — is moving
+`SOURCES` into a Firestore collection (e.g. `sourceConfigs`) that the
+script reads at the start of each run, so the admin panel can add, edit,
+enable/disable, or remove sources without touching code or redeploying.
+The `enabled` field structure in this version is already set up to make
+that migration straightforward when you're ready.
