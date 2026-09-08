@@ -1,11 +1,22 @@
 name: Fetch RSS Feeds
 
-# Runs automatically every 20 minutes, and can also be triggered manually
-# from the Actions tab in GitHub (useful for testing).
 on:
   schedule:
-    - cron: "*/20 * * * *"
+    # Every 5 minutes — GitHub Actions doesn't guarantee exact timing
+    # (expect some jitter, especially under load), and anything more
+    # frequent than 5 minutes isn't reliably honored anyway.
+    - cron: "*/5 * * * *"
   workflow_dispatch: {}
+
+# Prevents two runs from ever executing at the same time. If a run is
+# still going when the next scheduled trigger fires, the new one waits
+# in queue instead of starting in parallel — this is what actually makes
+# a 5-minute schedule safe (the ingestion script's own create()-based
+# dedupe already prevents duplicate articles, but this avoids wasted
+# double-fetching of the same feeds).
+concurrency:
+  group: fetch-rss
+  cancel-in-progress: false
 
 jobs:
   fetch:
@@ -18,9 +29,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: "npm"
 
-      - name: Install dependencies
-        run: npm install
+      - name: Install dependencies (reproducible, from lockfile)
+        run: npm ci
 
       - name: Run RSS ingestion
         env:
