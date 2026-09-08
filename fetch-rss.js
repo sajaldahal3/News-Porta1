@@ -26,7 +26,6 @@ const crypto = require("crypto");
 // flip "enabled" per source once sources move into Firestore itself.
 const SOURCES = [
   { id: "ronbpost", name: "RONB Post", category: "Nepal", rssUrl: "https://www.ronbpost.com/feed/", enabled: true },
-  { id: "techpana", name: "TechPana", category: "Tech", rssUrl: "https://techpana.com/feed/", enabled: true },
   { id: "ratopati", name: "Ratopati", category: "Nepal", rssUrl: "https://www.ratopati.com/feed", enabled: true },
   { id: "setopati", name: "Setopati", category: "Nepal", rssUrl: "https://www.setopati.com/feed", enabled: true },
   { id: "onlinekhabar", name: "Online Khabar", category: "Nepal", rssUrl: "https://www.onlinekhabar.com/feed", enabled: true },
