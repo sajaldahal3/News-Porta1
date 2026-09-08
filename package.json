@@ -1,11 +1,12 @@
 {
   "name": "rss-ingest",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Fetches RSS feeds and writes new articles into Firestore",
   "main": "fetch-rss.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node fetch-rss.js"
+    "start": "node fetch-rss.js",
+    "test": "node --test tests/util.test.js"
   },
   "dependencies": {
     "firebase-admin": "^12.1.0",
