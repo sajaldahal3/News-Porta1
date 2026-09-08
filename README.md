@@ -77,26 +77,33 @@ detection) — no live network or Firebase credentials needed.
 
 ## About the image problem specifically
 
-If images weren't showing up in your app before, it was very likely the
-old `extractImage()` only checking a couple of RSS field shapes — many
-Nepali news sites (and WordPress sites generally) put images in
-`media:content`, lazy-loaded `data-src` attributes, or an `item.image`
-field that the old code never looked at. The new version checks all of
-these, in priority order, and normalizes whatever URL it finds.
+There are two different reasons images can be missing, and they need different fixes:
 
-If an image still doesn't render in your **frontend app** after this
-fix, that's a separate, second issue: some publishers block "hotlinked"
-images (i.e. loading their image directly from another website) unless a
-proper referrer header is sent. In your frontend `<img>` tags, add:
+**1. The RSS feed itself has no image field.** A lot of news sites' feeds
+only publish title + a short excerpt, with no `enclosure`, `media:content`,
+or embedded `<img>` — there's nothing in the feed for any extraction logic
+to find, no matter how thorough it is. This turned out to be the actual
+cause for your sources: their `imageUrl` was showing as `null` in Firestore
+even after the extraction fix, meaning the RSS data genuinely had nothing.
 
-```html
-<img src="{imageUrl}" referrerPolicy="no-referrer" />
-```
+The fix: when `extractImage()` finds nothing in the RSS item, the script
+now **fetches the article page itself and reads its `og:image` meta tag**
+— the thumbnail every modern news site already generates for link previews
+(Facebook, Twitter, WhatsApp, etc.). This is a small, targeted fetch of
+just the page head, not scraping the article body, so it stays consistent
+with the aggregator/attribution model rather than crossing into
+full-content scraping. It's best-effort: if a page fetch fails or has no
+og:image either, `imageUrl` stays `null` and your frontend should just
+show a fallback placeholder image in that case.
 
-This fixes the majority of hotlink-blocking cases. For any source that
-still blocks it even with that, the only real fix is proxying/caching
-that source's images through your own backend — worth doing only if you
-hit it in practice, not preemptively.
+**2. The RSS/page had an image, but your frontend won't render it.** If
+you're using Next.js's `<Image>` component, it blocks external image
+domains by default unless you explicitly allow them in `next.config.js`
+via `images.remotePatterns`. Some publishers also block "hotlinked"
+images unless a proper referrer policy is sent — add
+`referrerPolicy="no-referrer"` to your `<img>` tags as a safety net.
+Check your browser DevTools Console for red errors mentioning "image" or
+a domain name to tell these apart quickly.
 
 ## Free-tier impact of the faster schedule
 
