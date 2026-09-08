@@ -35,7 +35,7 @@ const SOURCES = [
   // { id: "bbc-world", name: "BBC World", category: "World", rssUrl: "https://feeds.bbci.co.uk/news/world/rss.xml", enabled: true },
 ];
 
-const SNIPPET_MAX_LENGTH = 250;      // hard cap per your copyright/crediting rules
+const SNIPPET_MAX_LENGTH = 1000;      // hard cap per your copyright/crediting rules
 const TITLE_MAX_LENGTH = 300;
 const DEFAULT_MAX_ITEMS_PER_SOURCE = 50;   // cap per run, per source
 const DEFAULT_MAX_ARTICLE_AGE_HOURS = 48;  // don't import old backlog items
